@@ -9,9 +9,7 @@ pub const Value = union(enum) {
 
 pub const Opt = struct {
     ptr: *anyopaque,
-
-    flag: [:0]const u8,
-    short: [:0]const u8,
+    optMeta: OptMeta,
 
     parseArgFn: *const fn (*anyopaque, arg: [:0]const u8) anyerror!void,
     getValueFn: *const fn (*anyopaque) Value,
@@ -24,18 +22,21 @@ pub const Opt = struct {
     }
 };
 
-pub const StringOpt = struct {
-    value: [:0]const u8,
+pub const OptMeta = struct {
     flag: [:0]const u8,
     short: [:0]const u8,
+};
+
+pub const StringOpt = struct {
+    value: [:0]const u8,
+    optMeta: OptMeta,
 
     pub fn option(self: *StringOpt) Opt {
         return .{
             .ptr = self,
             .getValueFn = getValue,
             .parseArgFn = parseArg,
-            .flag = self.flag,
-            .short = self.short,
+            .optMeta = self.optMeta,
         };
     }
 
@@ -52,16 +53,14 @@ pub const StringOpt = struct {
 
 pub const BooleanOpt = struct {
     value: bool,
-    flag: [:0]const u8,
-    short: [:0]const u8,
+    optMeta: OptMeta,
 
     pub fn option(self: *BooleanOpt) Opt {
         return .{
             .ptr = self,
             .getValueFn = getValue,
             .parseArgFn = parseArg,
-            .flag = self.flag,
-            .short = self.short,
+            .optMeta = self.optMeta,
         };
     }
 
@@ -78,16 +77,14 @@ pub const BooleanOpt = struct {
 
 pub const IntegerOpt = struct {
     value: i32,
-    flag: [:0]const u8,
-    short: [:0]const u8,
+    optMeta: OptMeta,
 
     pub fn option(self: *IntegerOpt) Opt {
         return .{
             .ptr = self,
             .getValueFn = getValue,
             .parseArgFn = parseArg,
-            .flag = self.flag,
-            .short = self.short,
+            .optMeta = self.optMeta,
         };
     }
 
@@ -142,11 +139,11 @@ pub const Parser = struct {
     }
 
     pub fn registerOpt(self: *Parser, opt: Opt) !void {
-        if (self.registeredOpts.get(opt.flag)) |_| return error.FlagAlreadyRegistered;
-        if (self.registeredOpts.get(opt.short)) |_| return error.ShortFlagAlreadyRegistered;
+        if (self.registeredOpts.get(opt.optMeta.flag)) |_| return error.FlagAlreadyRegistered;
+        if (self.registeredOpts.get(opt.optMeta.short)) |_| return error.ShortFlagAlreadyRegistered;
 
-        try self.registeredOpts.put(opt.flag, opt);
-        try self.registeredOpts.put(opt.short, opt);
+        try self.registeredOpts.put(opt.optMeta.flag, opt);
+        try self.registeredOpts.put(opt.optMeta.short, opt);
     }
 
     pub fn registerOpts(self: *Parser, opts: []const Opt) !void {
