@@ -28,9 +28,15 @@ pub fn parseMetadata(self: *Self, db: std.fs.File) !void {
     const metadata = try self.allocator.create(Metadata);
     errdefer self.allocator.destroy(metadata);
 
-    const buf: []u8 = std.mem.asBytes(metadata);
+    const metaPtr: []u8 = std.mem.asBytes(metadata);
 
-    const read = try db.read(buf);
+    const src = try self.allocator.alloc(u8, metaPtr.len);
+    defer self.allocator.free(src);
+
+    const read = try db.read(src);
+
+    bytesToNative(src, metaPtr);
+
     if (read != @sizeOf(Metadata)) return error.CorruptedMetadata;
 
     if (metadata.magic != Magic) return error.InvalidMetadata;
@@ -47,8 +53,32 @@ pub fn createMetadata(self: *Self, db: std.fs.File) !void {
     errdefer self.allocator.destroy(newMeta);
 
     newMeta.magic = Magic;
-    newMeta.size = offset;
+    newMeta.size = 0;
     newMeta.offset = offset;
-    _ = try db.write(std.mem.asBytes(newMeta));
+
+    const src: []u8 = std.mem.asBytes(newMeta);
+
+    const dest = try self.allocator.alloc(u8, src.len);
+    defer self.allocator.free(dest);
+
+    bytesToBig(src, dest);
+
+    _ = try db.write(dest);
     self.metadata = newMeta;
+}
+
+fn bytesToBig(src: []u8, dest: []u8) void {
+    std.debug.assert(src.len == dest.len);
+
+    for (src, 0..) |byte, i| {
+        dest[i] = std.mem.nativeToBig(u8, byte);
+    }
+}
+
+fn bytesToNative(src: []u8, dest: []u8) void {
+    std.debug.assert(src.len == dest.len);
+
+    for (src, 0..) |byte, i| {
+        dest[i] = std.mem.bigToNative(u8, byte);
+    }
 }
