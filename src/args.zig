@@ -154,7 +154,6 @@ pub const Parser = struct {
 
     pub fn parse(self: *Parser) !void {
         const args = self.args[1..];
-        if (args.len == 0) return error.NoArgsProvided;
 
         var fifo = std.fifo.LinearFifo([:0]const u8, .Dynamic).init(self.allocator);
         defer fifo.deinit();
