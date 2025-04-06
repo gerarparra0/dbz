@@ -3,12 +3,30 @@ const Allocator = std.mem.Allocator;
 const Self = @This();
 
 const Magic: u64 = 0xf00d;
+const Version: u64 = 1;
+const MaxStrLen: u64 = 64;
+
+pub const Metadata = extern struct {
+    magic: u64,
+    version: u64,
+    size: u64,
+    users: u64,
+};
+
+pub const User = extern struct {
+    salary: f64,
+    name: [MaxStrLen:0]u8,
+    address: [MaxStrLen:0]u8,
+};
 
 allocator: Allocator,
 metadata: ?*Metadata,
 
 pub fn init(allocator: Allocator) Self {
-    return Self{ .allocator = allocator, .metadata = null };
+    return Self{
+        .allocator = allocator,
+        .metadata = null,
+    };
 }
 
 pub fn deinit(self: *Self) void {
@@ -16,55 +34,106 @@ pub fn deinit(self: *Self) void {
     self.allocator.destroy(meta);
 }
 
-pub const Metadata = packed struct {
-    magic: u64,
-    size: u64,
-    offset: u64,
-};
+pub fn parseDatabase(self: *Self, db: std.fs.File) !void {
+    try parseMetadata(self, db);
+
+    std.debug.print("magic: {d}\nversion: {d}\nsize: {d}\nusers: {d}", .{
+        self.metadata.?.magic,
+        self.metadata.?.version,
+        self.metadata.?.size,
+        self.metadata.?.users,
+    });
+}
 
 pub fn parseMetadata(self: *Self, db: std.fs.File) !void {
-    try db.seekTo(0);
-
     const metadata = try self.allocator.create(Metadata);
     errdefer self.allocator.destroy(metadata);
 
     const metaPtr: []u8 = std.mem.asBytes(metadata);
 
-    const src = try self.allocator.alloc(u8, metaPtr.len);
-    defer self.allocator.free(src);
-
-    const read = try db.read(src);
-
-    bytesToNative(src, metaPtr);
+    const read = try self.readBytesFromPosition(db, metaPtr, 0);
 
     if (read != @sizeOf(Metadata)) return error.CorruptedMetadata;
 
     if (metadata.magic != Magic) return error.InvalidMetadata;
 
+    const stat = try db.stat();
+    if (stat.size != metadata.size) return error.CorruptedDatabaseFile;
+
     self.metadata = metadata;
 }
 
 pub fn createMetadata(self: *Self, db: std.fs.File) !void {
-    try db.seekTo(0);
-
-    const offset = @sizeOf(Metadata);
-
     const newMeta = try self.allocator.create(Metadata);
     errdefer self.allocator.destroy(newMeta);
 
     newMeta.magic = Magic;
-    newMeta.size = 0;
-    newMeta.offset = offset;
+    newMeta.version = Version;
+    newMeta.size = @sizeOf(Metadata);
+    newMeta.users = 0;
 
-    const src: []u8 = std.mem.asBytes(newMeta);
+    const metaBytes: []u8 = std.mem.asBytes(newMeta);
+    const written = try self.writeBytesAtPosition(db, metaBytes, 0);
+    if (written != metaBytes.len) return error.WritingMetadata;
 
-    const dest = try self.allocator.alloc(u8, src.len);
-    defer self.allocator.free(dest);
-
-    bytesToBig(src, dest);
-
-    _ = try db.write(dest);
     self.metadata = newMeta;
+}
+
+pub fn insert(self: *Self, db: std.fs.File, userStr: [:0]const u8) !void {
+    var iter = std.mem.splitSequence(u8, userStr, ",");
+    const name: []const u8 = iter.next() orelse return error.ParsingName;
+    const address: []const u8 = iter.next() orelse return error.ParsingAddress;
+    const salaryStr: []const u8 = iter.next() orelse return error.ParsingSalary;
+    const salary = try std.fmt.parseFloat(f64, salaryStr);
+
+    var addressToInsert: [MaxStrLen:0]u8 = undefined;
+    if (address.len > addressToInsert.len) return error.MaxStringLength;
+    std.mem.copyForwards(u8, &addressToInsert, address);
+
+    var nameToInsert: [MaxStrLen:0]u8 = undefined;
+    if (name.len > nameToInsert.len) return error.MaxStringLength;
+    std.mem.copyForwards(u8, &nameToInsert, name);
+
+    var userToInsert = User{
+        .address = addressToInsert,
+        .name = nameToInsert,
+        .salary = salary,
+    };
+
+    var currentSize: usize = @sizeOf(User);
+    const userBytes: []u8 = std.mem.asBytes(&userToInsert);
+    var written = try self.writeBytesAtPosition(db, userBytes, currentSize * self.metadata.?.users);
+    if (written != userBytes.len) return error.WritingUser;
+
+    self.metadata.?.size += currentSize;
+    self.metadata.?.users += 1;
+
+    currentSize = @sizeOf(Metadata);
+    const metaBytes: []u8 = std.mem.asBytes(self.metadata.?);
+    written = try self.writeBytesAtPosition(db, metaBytes, 0);
+    if (written != metaBytes.len) return error.WritingMetadata;
+}
+
+fn writeBytesAtPosition(self: *Self, db: std.fs.File, bts: []u8, pos: u64) !usize {
+    const bytesToWrite = try self.allocator.alloc(u8, bts.len);
+    defer self.allocator.free(bytesToWrite);
+    bytesToBig(bts, bytesToWrite);
+
+    try db.seekTo(pos);
+
+    return db.write(bytesToWrite);
+}
+
+fn readBytesFromPosition(self: *Self, db: std.fs.File, bts: []u8, pos: u64) !usize {
+    const bytesToReadBuf = try self.allocator.alloc(u8, bts.len);
+    defer self.allocator.free(bytesToReadBuf);
+
+    try db.seekTo(pos);
+
+    const read = try db.read(bytesToReadBuf);
+    bytesToNative(bytesToReadBuf, bts);
+
+    return read;
 }
 
 fn bytesToBig(src: []u8, dest: []u8) void {

@@ -12,10 +12,12 @@ pub fn main() !void {
 
     var fileOpt = args.StringOpt{ .value = "db.db", .optMeta = .{ .flag = "file", .short = "f" } };
     var createOpt = args.BooleanOpt{ .value = false, .optMeta = .{ .flag = "create", .short = "c" } };
+    var insertOpt = args.StringOpt{ .value = "", .optMeta = .{ .flag = "insert", .short = "i" } };
 
     try parser.registerOpts(&[_]args.Opt{
         fileOpt.option(),
         createOpt.option(),
+        insertOpt.option(),
     });
     try parser.parse();
 
@@ -29,8 +31,13 @@ pub fn main() !void {
         try dbParser.createMetadata(dbFile);
     } else {
         dbFile = try std.fs.cwd().openFile(fileOpt.value, .{});
-        try dbParser.parseMetadata(dbFile);
+        try dbParser.parseDatabase(dbFile);
     }
 
     defer dbFile.close();
+
+    if (!std.mem.eql(u8, insertOpt.value, "")) {
+        std.debug.print("inserting:\t{s}", .{insertOpt.value});
+        try dbParser.insert(dbFile, insertOpt.value);
+    }
 }
