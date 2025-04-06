@@ -10,8 +10,8 @@
             "name": "Debug",
             "program": "${workspaceFolder}/zig-out/bin/${fileWorkspaceFolderBasename}",
             "args": [
-                "--testing",
-                "aaaaaa",
+                "insert",
+                "testing,copper,56.3"
             ],
             "cwd": "${workspaceFolder}",
             "preLaunchTask": "build",

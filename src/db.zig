@@ -1,4 +1,5 @@
 const std = @import("std");
+const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 const Self = @This();
 
@@ -34,8 +35,8 @@ pub fn deinit(self: *Self) void {
     self.allocator.destroy(meta);
 }
 
-pub fn parseDatabase(self: *Self, db: std.fs.File) !void {
-    try parseMetadata(self, db);
+pub fn parseDatabase(self: *Self, dbFile: std.fs.File) !void {
+    try parseMetadata(self, dbFile);
 
     std.debug.print("magic: {d}\nversion: {d}\nsize: {d}\nusers: {d}", .{
         self.metadata.?.magic,
@@ -45,25 +46,26 @@ pub fn parseDatabase(self: *Self, db: std.fs.File) !void {
     });
 }
 
-pub fn parseMetadata(self: *Self, db: std.fs.File) !void {
+pub fn createDatabase(self: *Self, dbFile: std.fs.File) !void {
+    try createMetadata(self, dbFile);
+}
+
+fn parseMetadata(self: *Self, db: std.fs.File) !void {
     const metadata = try self.allocator.create(Metadata);
     errdefer self.allocator.destroy(metadata);
 
     const metaPtr: []u8 = std.mem.asBytes(metadata);
-
+    assert(metaPtr.len == @sizeOf(Metadata));
     const read = try self.readBytesFromPosition(db, metaPtr, 0);
-
     if (read != @sizeOf(Metadata)) return error.CorruptedMetadata;
-
     if (metadata.magic != Magic) return error.InvalidMetadata;
-
     const stat = try db.stat();
     if (stat.size != metadata.size) return error.CorruptedDatabaseFile;
 
     self.metadata = metadata;
 }
 
-pub fn createMetadata(self: *Self, db: std.fs.File) !void {
+fn createMetadata(self: *Self, db: std.fs.File) !void {
     const newMeta = try self.allocator.create(Metadata);
     errdefer self.allocator.destroy(newMeta);
 
@@ -73,6 +75,7 @@ pub fn createMetadata(self: *Self, db: std.fs.File) !void {
     newMeta.users = 0;
 
     const metaBytes: []u8 = std.mem.asBytes(newMeta);
+    assert(metaBytes.len == @sizeOf(Metadata));
     const written = try self.writeBytesAtPosition(db, metaBytes, 0);
     if (written != metaBytes.len) return error.WritingMetadata;
 
@@ -84,31 +87,24 @@ pub fn insert(self: *Self, db: std.fs.File, userStr: [:0]const u8) !void {
     const name: []const u8 = iter.next() orelse return error.ParsingName;
     const address: []const u8 = iter.next() orelse return error.ParsingAddress;
     const salaryStr: []const u8 = iter.next() orelse return error.ParsingSalary;
-    const salary = try std.fmt.parseFloat(f64, salaryStr);
+    const salary = std.fmt.parseFloat(f64, salaryStr) catch return error.ParsingSalary;
 
-    var addressToInsert: [MaxStrLen:0]u8 = undefined;
-    if (address.len > addressToInsert.len) return error.MaxStringLength;
-    std.mem.copyForwards(u8, &addressToInsert, address);
+    const userToInsert = try self.allocator.create(User);
+    defer self.allocator.destroy(userToInsert);
 
-    var nameToInsert: [MaxStrLen:0]u8 = undefined;
-    if (name.len > nameToInsert.len) return error.MaxStringLength;
-    std.mem.copyForwards(u8, &nameToInsert, name);
+    assert(address.len <= userToInsert.address.len);
+    assert(name.len <= userToInsert.name.len);
+    std.mem.copyForwards(u8, &userToInsert.address, address);
+    std.mem.copyForwards(u8, &userToInsert.name, name);
+    userToInsert.salary = salary;
 
-    var userToInsert = User{
-        .address = addressToInsert,
-        .name = nameToInsert,
-        .salary = salary,
-    };
-
-    var currentSize: usize = @sizeOf(User);
-    const userBytes: []u8 = std.mem.asBytes(&userToInsert);
-    var written = try self.writeBytesAtPosition(db, userBytes, currentSize * self.metadata.?.users);
+    const userBytes: []u8 = std.mem.asBytes(userToInsert);
+    var written = try self.writeBytesAtPosition(db, userBytes, @sizeOf(User) * self.metadata.?.users + @sizeOf(Metadata));
     if (written != userBytes.len) return error.WritingUser;
 
-    self.metadata.?.size += currentSize;
+    self.metadata.?.size += @sizeOf(User);
     self.metadata.?.users += 1;
 
-    currentSize = @sizeOf(Metadata);
     const metaBytes: []u8 = std.mem.asBytes(self.metadata.?);
     written = try self.writeBytesAtPosition(db, metaBytes, 0);
     if (written != metaBytes.len) return error.WritingMetadata;

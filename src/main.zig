@@ -28,16 +28,15 @@ pub fn main() !void {
 
     if (createOpt.value) {
         dbFile = try std.fs.cwd().createFile(fileOpt.value, .{});
-        try dbParser.createMetadata(dbFile);
+        try dbParser.createDatabase(dbFile);
     } else {
-        dbFile = try std.fs.cwd().openFile(fileOpt.value, .{});
+        dbFile = try std.fs.cwd().openFile(fileOpt.value, .{ .mode = .read_write });
         try dbParser.parseDatabase(dbFile);
     }
 
     defer dbFile.close();
 
     if (!std.mem.eql(u8, insertOpt.value, "")) {
-        std.debug.print("inserting:\t{s}", .{insertOpt.value});
         try dbParser.insert(dbFile, insertOpt.value);
     }
 }
